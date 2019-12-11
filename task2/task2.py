@@ -4,12 +4,24 @@ import re
 from fuzzywuzzy import fuzz
 from fuzzywuzzy import process
 from names_dataset import NameDataset
-from pyspark import SparkContext
+import json
+#from pyspark import SparkContext
 
 # read single column dataset and return as a set
+def getLabelList():
+    labelList = {'person_name'.upper(), 'business_name'.upper(), 'phone_number'.upper(), 
+            'address'.upper(), 'street_name'.upper(), 'city'.upper(),
+            'neighborhood'.upper(), 'lat_lon_cord'.upper(), 'zip_code'.upper(), 
+            'borough'.upper(), 'school_name'.upper(), 'color'.upper(), 'car_make'.upper(), 
+            'city_agency'.upper(), 'area_of_study'.upper(), 'subject_in_school'.upper(), 
+            'school_level'.upper(), 'college_name'.upper(), 'website'.upper(), 
+            'building_classification'.upper(), 'vehicle_type'.upper(), 'location_type'.upper(), 
+            'park_playground'.upper(), 'other'.upper()}
+    return labelList
+
 def readSingleColumnDataset(filePath):
     output = set()
-    with open(filePath, 'r') as csvFile:
+    with open(filePath, 'r', encoding='utf8') as csvFile:
         read = csv.reader(csvFile)
         flag = False   # flag marks whether it is the first reading
         for row in read:
@@ -21,7 +33,7 @@ def readSingleColumnDataset(filePath):
 
 def readDoubleColumnDataset(filePath):
     output = set()
-    with open(filePath, 'r') as csvFile:
+    with open(filePath, 'r', encoding='utf8') as csvFile:
         read = csv.reader(csvFile)
         flag = False    # flag marks whether it is the first reading
         for row in read:
@@ -59,7 +71,7 @@ def readNeighborhoodDataset(filePath):
 def readData(filePath):
     output = []
     freq = []
-    with open(filePath, 'r') as file:
+    with open(filePath, 'r', encoding='utf8') as file:
         lines = file.readlines()
         for line in lines:
             data = line.split('\t')
@@ -80,9 +92,9 @@ def checkFileName(columnName):
         and (not ('STREET' in columnName and 'NAME' in columnName)):
         return ['ADDRESS', 'BUSINESS_NAME', 'STREET_NAME']
     elif ('STREET' in columnName or 'STR' in columnName) and (not 'ADDRESS' in columnName):
-        return ['STREE_NAME', 'ADDRESS']
+        return ['STREET_NAME', 'ADDRESS']
     elif 'CITY' in columnName:
-        return ['CITY', 'BOROUGH', 'NEIGHBORHOOD', 'ZIP', 'STREET_NAME', 'ADDRESS', 'PHONE_NUMBER']
+        return ['CITY', 'BOROUGH', 'NEIGHBORHOOD', 'ZIP_CODE', 'STREET_NAME', 'ADDRESS', 'PHONE_NUMBER']
     elif 'NEIGHBORHOOD' in columnName:
         return ['CITY', 'BOROUGH', 'NEIGHBORHOOD']
     elif ('LAT' in columnName and 'LON' in columnName) or 'LOCATION' in columnName:
@@ -91,8 +103,8 @@ def checkFileName(columnName):
         return ['ZIP_CODE']
     elif 'BORO' in columnName:
         return ['BOROUGH', 'CITY', 'NEIGHBORHOOD']
-    elif ('SCHOOL' in columnName or 'ORG' in columnName) and 'NAME' in columnName:
-        return ['SCHOOL_NAME', 'PARK_PLAYGROUND', 'ADDRESS']
+    elif (('SCHOOL' in columnName or 'ORG' in columnName) and 'NAME' in columnName) or columnName == 'SCHOOL':
+        return ['SCHOOL_NAME', 'PARK_PLAYGROUND', 'ADDRESS', 'COLLEGE_NAME']
     elif 'COLOR' in columnName:
         return ['COLOR']
     elif 'MAKE' in columnName or 'MODEL' in columnName:
@@ -103,7 +115,7 @@ def checkFileName(columnName):
         return ['AREA_OF_STUDY']
     elif 'SUBJECT' in columnName or 'COURSE' in columnName:
         return ['SUBJECT_IN_SCHOOL']
-    elif 'LEVEL' in columnName:
+    elif 'LEVEL' in columnName or ('SCHOOL' in columnName and 'TYPE' in columnName):
         return ['SCHOOL_LEVEL']
     elif 'UNIVERSITY' in columnName or 'COLLEGE' in columnName:
         return ['COLLEGE_NAME']
@@ -120,7 +132,7 @@ def checkFileName(columnName):
     elif 'CANDMI' in columnName or 'MI' in columnName:
         return ['PERSON_NAME']
     elif 'LANDMARK' in columnName:
-        return ['COLLEGE_NAME', 'STREE_NAME', 'LOCATION_TYPE', 'PARK_PLAYGROUND']
+        return ['COLLEGE_NAME', 'STREET_NAME', 'LOCATION_TYPE', 'PARK_PLAYGROUND']
     else:
         return ['NONE MATCH']
 
@@ -136,15 +148,12 @@ def checkColor(cell):
     if(cell in relativeDataSets['COLOR']):
         return True
     else:
-        #print(cell)
         values = re.findall(r'[\w]+', cell)
-        #print(values)
         if len(values) == 0:
             return False
         elif len(values) == 1:
             if len(values[0]) == 4:
                 v1, v2 = values[0][:2], values[0][2:]
-                #print('v1: ', v1, 'v2: ', v2)
                 if(v1 in relativeDataSets['COLOR'] and v2 in relativeDataSets['COLOR']):
                     return True
             else:
@@ -166,8 +175,11 @@ def checkCity(cell):
 
 def checkSchoolLevel(cell):
     cell = cell.strip()
-    if(cell in relativeDataSets['SCHOOL_LEVEL']):
+    if cell in relativeDataSets['SCHOOL_LEVEL']:
         return True
+    for word in cell.split(' ', 1):
+        if word in relativeDataSets['SCHOOL_LEVEL']:
+            return True
     return False
 
 def checkCarMake(cell):
@@ -192,6 +204,8 @@ def checkCarMake(cell):
     for cm in relativeDataSets['CAR_MAKE']:
         if(abs(len(cm)-len(cell)) <= 2):
             candidates.append(cm)
+    if not candidates:
+        return False
     fw_output = process.extractOne(cell, candidates)
 
     for carMake in relativeDataSets['CAR_MAKE']:
@@ -259,6 +273,21 @@ def checkNeighborhood(cell):
                        .replace('-', '').replace('_', '').replace(',', '')
     if cell in relativeDataSets['NEIGHBORHOOD']:
         return True
+    else:
+        cellLength = len(cell)
+        if cellLength <= 4:
+            return False
+        candidates = []
+        for neighbor in relativeDataSets['NEIGHBORHOOD']:
+            if(abs(len(neighbor)-len(cell)) <= 2):
+                candidates.append(neighbor)
+        if not candidates:
+            return False
+        fw_output = process.extractOne(cell, candidates)
+
+        if fw_output:
+            if fw_output[1] >= 88:
+                return True
     return False
 
 def checkVehicleType(cell):
@@ -280,6 +309,21 @@ def checkBorough(cell):
         return True
     elif cell in abbr:
         return True
+    else:
+        cellLength = len(cell)
+        if cellLength <= 4:
+            return False
+        candidates = []
+        for boro in relativeDataSets['BOROUGH']:
+            if(abs(len(boro)-len(cell)) <= 2):
+                candidates.append(boro)
+        if not candidates:
+            return False
+        fw_output = process.extractOne(cell, candidates)
+
+        if fw_output:
+            if fw_output[1] >= 88:
+                return True
     return False
 
 def checkSubjects(cell):
@@ -310,22 +354,22 @@ def checkPark(cell):
 
 regex_coordinate = re.compile('^\([-+]?([1-8]?\d(\.\d+)?|90(\.0+)?),\s*[-+]?(180(\.0+)?|((1[0-7]\d)|([1-9]?\d))(\.\d+)?)\)$')
 def checkCoordinate(cell):
-    return regex_coordinate.search(cell)
+    return regex_coordinate.search(cell) != None
     
 regex_phonenumber = re.compile('^((\+?)1)?((\(\d{3}\)?)|(\d{3}))([\s\-.\/]?)(\d{3})([\s\-.\/]?)(\d{4})$')
 def checkPhoneNumber(cell):
-    return regex_phonenumber.search(cell)
+    return regex_phonenumber.search(cell) != None
 
 regex_website = re.compile('^(https?:\/\/)?(www\.)?([a-zA-Z0-9]+(-?[a-zA-Z0-9])*\.)+[\w]{2,}(\/\S*)?$')
 def checkWebsite(cell):
-    return regex_website.search(cell.lower())
+    return regex_website.search(cell.lower()) != None
     
 regex_zipcode = re.compile('^[0-9]{4,5}(\-[0-9]{3,4})?$')
 regex_nonzero = re.compile('[1-9]')
 regex_nonnine = re.compile('[0-8]')
 def checkZipcode(cell):
-    if regex_zipcode.search(cell):
-        return regex_nonnine.search(cell) && regex_nonzero.search(cell)
+    if regex_zipcode.search(cell)!= None:
+        return regex_nonnine.search(cell)!= None and regex_nonzero.search(cell)!= None
     else:
         return False
 
@@ -338,7 +382,7 @@ def checkSchoolName(cell):
             return True
     return False
     
-university_keywords = ['COLLEGE', 'UNIVERSITY']
+university_keywords = ['COLLEGE', 'UNIVERSITY', 'ACADEMY']
 def checkUniversityName(cell):
     for keyword in university_keywords:
         if keyword.lower() in cell.lower():
@@ -347,15 +391,18 @@ def checkUniversityName(cell):
     
 regex_address = re.compile('\d{1,4}(th|st|rd)?\s+(?:street|st|avenue|ave|road|rd|highway|hwy|square|sq|trail|trl|drive|dr|court|ct|park|parkway|pkwy|circle|cir|boulevard|blvd)\W?(?=\s|$)')
 def checkAddress(cell):
-    return regex_address.search(cell.lower())
+    return regex_address.search(cell.lower())!= None
     
 regex_streetname = re.compile('(?:street|st|avenue|ave|road|rd|highway|hwy|square|sq|trail|trl|drive|dr|court|ct|park|parkway|pkwy|circle|cir|boulevard|blvd|place|pl)\s*$')
 def checkStreetname(cell):
-    return regex_streetname.search(cell.lower())
+    return regex_streetname.search(cell.lower())!= None
 
 regex_businessname = re.compile('(^|\s)((LLC|GROUP|INC|LTD|LLP|PC|CO|P.C|PLLC|CORP|PE|RA|P.E|R.A)(\s|$|\.))|(ARCHITECT|ENGINEER|CONSULT|DESIGN|ASSOC)')
 def checkBusinessname(cell):
-    return regex_businessname.search(cell.upper())
+    return regex_businessname.search(cell.upper())!= None
+
+def noneMatchCondition(cell):
+    return False
 
 def splitText(x):
     cell, freq = x.split('\t', 1)
@@ -368,23 +415,140 @@ def judgeSemanticType(x):
     return ('OTHER', x[1])
 
 def getTopTwoFreq(dictionary):
-    top = 0
-    topType = 'top_default'
-    second = 0
-    secondType = 'second_default'
+    candidates = []
     for key in dictionary:
-        if dictionary[key] >= top:
-            second = top
-            secondType = topType
-            top = dictionary[key]
-            topType = key
-        elif top > dictionary[key] >= second:
-            second = dictionary[key]
-            secondType = key
-        else:
-            continue
-    return [topType, secondType]
+        if key != 'OTHER':
+            candidates.append((key, dictionary[key]))
+    total = 0
+    for cand in candidates:
+        total += cand[1]
+    if total == 0:
+        return []
+    output = []
+    for cand in candidates:
+        if cand[1]/total > 0.4:
+            output.append(cand[0])
+    return output
 
+
+def readFilenameList():
+    outputList = None
+    with open('cluster2.txt') as textFile:
+        outputList = textFile.read()
+        outputList = outputList[1:len(outputList)-1].replace('\'', '').split(', ')
+    print('filename list length: ', len(outputList))
+    return outputList
+
+
+
+# since we can't install local python environment in dumbo, we complete the output data
+# by local computer. However, we provide a extra Spark-style code on bottom.
+
+for fn in readFilenameList():
+    print('start process file: ', fn)
+
+    fileName = fn.upper()
+    fileName = fileName.split('.')
+    cells, freqs = readData('NYCColumns/' + fn)
+    relativeTypes = checkFileName(fileName[1])
+    relativeDataSets = dict()
+    if 'PERSON_NAME' in relativeTypes:
+        relativeDataSets['PERSON_NAME'] = NameDataset()
+    if 'CITY' in relativeTypes:
+        relativeDataSets['CITY'] = readSingleColumnDataset('dataset/us_cities.csv')
+    if 'NEIGHBORHOOD' in relativeTypes:
+        relativeDataSets['NEIGHBORHOOD'] = readNeighborhoodDataset('dataset/neighborhood.csv')
+    if 'BOROUGH' in relativeTypes:
+        relativeDataSets['BOROUGH'] = readSingleColumnDataset('dataset/Borough.csv')
+    if 'COLOR' in relativeTypes:
+        relativeDataSets['COLOR'] = readDoubleColumnDataset('dataset/color_names.csv')
+    if 'CAR_MAKE' in relativeTypes:
+        relativeDataSets['CAR_MAKE'] = readSingleColumnDataset('dataset/car_makes.csv')
+    if 'CITY_AGENCY' in relativeTypes:
+        relativeDataSets['CITY_AGENCY'] = readSingleColumnDataset('dataset/agency_abbreviation.csv')
+    if 'AREA_OF_STUDY' in relativeTypes:
+        relativeDataSets['AREA_OF_STUDY'] = readSingleColumnDataset('dataset/AreasOfStudy.csv')
+    if 'SUBJECT_IN_SCHOOL' in relativeTypes:
+        relativeDataSets['SUBJECT_IN_SCHOOL'] = readSingleColumnDataset('dataset/subjects.csv')
+    if 'SCHOOL_LEVEL' in relativeTypes:
+        relativeDataSets['SCHOOL_LEVEL'] = readSingleColumnDataset('dataset/school_levels.csv')
+    if 'BUILDING_CLASSIFICATION' in relativeTypes:
+        relativeDataSets['BUILDING_CLASSIFICATION'] = readBuildingClassificationDataset('dataset/building_classification.csv')
+    if 'VEHICLE_TYPE' in relativeTypes:
+        relativeDataSets['VEHICLE_TYPE'] = readSingleColumnDataset('dataset/vehicle_types.csv')
+    if 'LOCATION_TYPE' in relativeTypes:
+        relativeDataSets['LOCATION_TYPE'] = readSingleColumnDataset('dataset/Type_of_location.csv')
+    if 'PARK_PLAYGROUND' in relativeTypes:
+        relativeDataSets['PARK_PLAYGROUND'] = {'PARK', 'PLAYGROUND', 'FIELD', 'SQUARE', 'BEACH',
+                                               'PARKWAY', 'PLAZA', 'SENIOR CENTER',
+                                               'TRIANGLE', 'GARDEN', 'RINK'}
+
+    functionDict = {'PERSON_NAME': checkPersonName, 'BUSINESS_NAME': checkBusinessname,
+                    'PHONE_NUMBER': checkPhoneNumber, 'ADDRESS': checkAddress,
+                    'STREET_NAME': checkStreetname, 'CITY': checkCity,
+                    'NEIGHBORHOOD': checkNeighborhood, 'LAT_LON_CORD': checkCoordinate,
+                    'ZIP_CODE': checkZipcode, 'BOROUGH': checkBorough,
+                    'SCHOOL_NAME': checkSchoolName, 'COLOR': checkColor,
+                    'CAR_MAKE': checkCarMake, 'CITY_AGENCY': checkAgency,
+                    'AREA_OF_STUDY': checkAreasOfStudy, 'SUBJECT_IN_SCHOOL': checkSubjects,
+                    'SCHOOL_LEVEL': checkSchoolLevel, 'COLLEGE_NAME': checkUniversityName,
+                    'WEBSITE': checkWebsite, 'BUILDING_CLASSIFICATION': checkBuildingClassification,
+                    'VEHICLE_TYPE': checkVehicleType, 'LOCATION_TYPE': checkTypeLocation,
+                    'PARK_PLAYGROUND': checkPark, 'NONE MATCH': noneMatchCondition}
+
+
+
+    freqDict = dict()
+    for possible_type in relativeTypes:
+        freqDict[possible_type] = 0
+    freqDict['OTHER'] = 0
+
+    for i in range(len(cells)):
+        flag = False
+        for possible_type in relativeTypes:
+            if functionDict[possible_type](cells[i]):
+                freqDict[possible_type] += freqs[i]
+                flag = True
+                break
+        if not flag:
+            freqDict['OTHER'] += freqs[i]
+
+    result = []
+    for key in freqDict:
+        if freqDict[key] == 0:
+            continue
+        result.append((key, freqDict[key]))
+
+
+    predictLabel = getTopTwoFreq(freqDict)
+    output = dict()
+
+    # output result as json file
+    labelList = getLabelList()
+    actualTypes = []
+    for word in re.findall(r'[\w]+', fileName[1]):
+        if word in labelList:
+            actualTypes.append(word)
+    output['column_name'] = fileName[1]
+    output['actualTypes'] = actualTypes
+    output['semantic_types'] = [dict() for i in range(len(result))]
+    for i in range(len(result)):
+        output['semantic_types'][i]['semantic_type'] = result[i][0]
+        output['semantic_types'][i]['count'] = result[i][1]
+    output['predictLabel'] = predictLabel
+
+    with open('result/'+fileName[0]+'.'+fileName[1]+'.json', 'w') as textFile:
+        textFile.write(json.dumps(output))
+    print('successfully handle file: ', fn)
+
+
+
+
+
+
+
+'''
+# Spark-Style Code 
 
 fileName = sys.argv[1].upper()
 fileName = fileName.split('.')
@@ -424,7 +588,7 @@ if 'PARK_PLAYGROUND' in relativeTypes:
 
 functionDict = {'PERSON_NAME': checkPersonName, 'BUSINESS_NAME': checkBusinessname,
                 'PHONE_NUMBER': checkPhoneNumber, 'ADDRESS': checkAddress,
-                'STREE_NAME': checkStreetname, 'CITY': checkCity,
+                'STREET_NAME': checkStreetname, 'CITY': checkCity,
                 'NEIGHBORHOOD': checkNeighborhood, 'LAT_LON_CORD': checkCoordinate,
                 'ZIP_CODE': checkZipcode, 'BOROUGH': checkBorough,
                 'SCHOOL_NAME': checkSchoolName, 'COLOR': checkColor,
@@ -438,86 +602,28 @@ functionDict = {'PERSON_NAME': checkPersonName, 'BUSINESS_NAME': checkBusinessna
 sc = SparkContext()
 reader = sc.textFile(sys.argv[1]).map(splitText)
 freqDict = dict()
-checkList = []
 for possible_type in relativeTypes:
     freqDict[possible_type] = 0
-    checkList.append(functionDict[possible_type])
+freqDict['Other'] = 0
 resultRDD = reader.map(judgeSemanticType).reduceByKey(lambda x: x+y)
 result = resultRDD.collect()
 resultDict = dict()
 for res in result:
     resultDict[res[0]] = res[1]
-computedLabel = getTopTwoFreq(resultDict)
+predictLabel = getTopTwoFreq(resultDict)
 output = dict()
 
 output['column_name'] = fileName[1]
-output['semantic_types'] = [dict() for i in range()]
-for res in result:
-    output['semantic_types']['semantic_type']
+output['semantic_types'] = [dict() for i in range(len(result))]
+for i in range(len(result)):
+    output['semantic_types'][i]['semantic_type'] = result[i][0]
+    output['semantic_types'][i]['count'] = result[i][1]
+output['predictLabel'] = predictLabel
 
+rdd = spark.sparkContext.parallelize([json.dumps(output)])
+rdd.saveAsTextFile(fileName[0]+fileName[1]+'.json')
 
-
-
-
-
-rdd = spark.sparkContext.parallelize([json.dumps(result)])
-rdd.saveAsTextFile(sys.argv[1].split('/')[-1] + '.json')
-
-
-
-
-
-
-
-
-
-# reading dataset
-colors = readDoubleColumnDataset('dataset/color_names.csv')
-cities = readSingleColumnDataset('dataset/us_cities.csv')
-school_levels = readSingleColumnDataset('dataset/school_levels.csv')
-carMakes = readSingleColumnDataset('dataset/car_makes.csv')
-person_names = NameDataset()
-building_classifications = readBuildingClassificationDataset('dataset/building_classification.csv')
-agency_abbreviations = readSingleColumnDataset('dataset/agency_abbreviation.csv')
-neighborhoods = readNeighborhoodDataset('dataset/neighborhood.csv')
-vehicle_types = readSingleColumnDataset('dataset/vehicle_types.csv')
-
-areas = readSingleColumnDataset('dataset/AreasOfStudy.csv')
-borough = readSingleColumnDataset('dataset/Borough.csv')
-subjects = readSingleColumnDataset('dataset/subjects.csv')
-type_location = readSingleColumnDataset('dataset/Type_of_location.csv')
-
-fileName = sys.argv[1].upper()
-fileName = fileName.split('.')
-cells, freqs = readData('NYCColumns/' + sys.argv[1])
-# @fileNameCheck contains all possible semantic types for the column
-fileNameCheck = checkFileName(fileName[1])
-
-
-# Check
-
-if('CARMAKE' in fileNameCheck):
-    carmakeSum = 0
-    otherSum = 0
-    output = []
-    
-    for i in range(len(cells)):
-        if(checkCarMake(cells[i], carMakes)):
-            carmakeSum += freqs[i]
-            output.append((cells[i], 'CARMAKE'))
-        else:
-            otherSum += freqs[i]
-            output.append((cells[i], 'OTHER'))
-    print(carmakeSum, otherSum)
-    for out in output:
-        print(out)
-
-
-
-
-
-
-
+'''
 
 
 
